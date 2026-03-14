@@ -1,0 +1,8 @@
+insightface>=0.7.3
+onnxruntime-gpu>=1.16.0
+facenet-pytorch
+safetensors>=0.4.0
+opencv-python
+numpy
+# EVA-CLIP (installer manuellement si auto-install échoue):
+# pip install git+https://github.com/baaivision/EVA.git#subdirectory=EVA-CLIP
