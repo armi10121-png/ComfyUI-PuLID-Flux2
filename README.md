@@ -32,13 +32,17 @@ Previous PuLID implementations only support Flux.1 Dev. This project is the **fi
 ## 📦 Installation
 
 ### 1. Clone into ComfyUI custom_nodes
-
 ```bash
 cd ComfyUI/custom_nodes
 git clone https://github.com/iFayens/ComfyUI-PuLID-Flux2.git ComfyUI-PuLID-Flux2Klein
 cd ComfyUI-PuLID-Flux2Klein
-pip install -r requirements.txt
 ```
+
+> ⚠️ **If you already have a working ComfyUI**, install only the required packages to avoid breaking your torch version:
+> ```bash
+> pip install insightface onnxruntime-gpu open-clip-torch safetensors ml_dtypes==0.3.2
+> ```
+> Only run `pip install -r requirements.txt` on a **fresh install**.
 
 ### 2. EVA-CLIP (automatic)
 
