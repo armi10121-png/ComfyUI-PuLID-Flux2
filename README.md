@@ -1,199 +1,187 @@
-# ComfyUI-PuLID-Flux2
+# ComfyUI-PuLID-Flux2Klein
 
-[![GitHub stars](https://img.shields.io/github/stars/iFayens/ComfyUI-PuLID-Flux2?style=social)](https://github.com/iFayens/ComfyUI-PuLID-Flux2)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![ComfyUI](https://img.shields.io/badge/ComfyUI-Compatible-blue)](https://github.com/comfyanonymous/ComfyUI)
-[![Flux.2 Klein](https://img.shields.io/badge/Flux.2-Klein%204B%2F9B-green)](https://huggingface.co/black-forest-labs)
-
-> **First PuLID implementation natively adapted for FLUX.2 Klein (4B & 9B)**  
-> Consistent face identity injection without model pollution — March 2026
+Custom node ComfyUI implémentant PuLID (Pure Identity) pour **FLUX.2 Klein** (4B et 9B).
 
 ---
 
-## 🎯 What is this?
+## ⚙️ Architecture — Pourquoi ce node existe
 
-This custom node brings **PuLID (Pure Identity)** face consistency to **FLUX.2 Klein**, the latest generation model from Black Forest Labs.
+PuLID original ne supporte que Flux.1 Dev. FLUX.2 Klein a une architecture différente :
 
-Previous PuLID implementations only support Flux.1 Dev. This project is the **first** to adapt PuLID's architecture specifically for Flux.2 Klein's unique transformer structure.
+| | Flux.1 Dev | Flux.2 Klein 4B | Flux.2 Klein 9B |
+|---|---|---|---|
+| Double blocks | 19 | 5 | 8 |
+| Single blocks | 38 | 20 | 24 |
+| Hidden dim | 4096 | 3072 | 4096 |
+| Modulation | Par bloc | Partagée | Partagée |
+| Text encoder | T5 | Qwen3-4B | Qwen3-8B |
+| Conditioning | [B,77,4096] | [B,512,12288] | [B,512,12288] |
 
-### Key differences vs existing PuLID nodes
-
-| | PuLID Flux.1 (lldacing) | **ComfyUI-PuLID-Flux2** |
-|---|---|---|
-| Model | Flux.1 Dev | **Flux.2 Klein 4B / 9B** |
-| Double blocks | 19 | 5 (4B) / 8 (9B) |
-| Single blocks | 38 | 20 (4B) / 24 (9B) |
-| Hidden dim | 4096 | **3072** (4B) / 4096 (9B) |
-| Modulation | Per block | **Shared** (Klein-specific) |
-| Text encoder | T5 | **Qwen3** |
-
----
-
-## ✨ Results
-
-| Reference | Generated |
-|---|---|
-| Input face photo | Consistent identity preserved in new scene |
-
-> Results shown use `pulid_flux_v0.9.1.safetensors` (Flux.1 weights, partial compatibility).  
-> Native Klein-trained weights coming soon via the training script included in this repo.
+Ce node adapte l'injection d'embeddings faciaux à ces spécificités.
 
 ---
 
 ## 📦 Installation
 
-### 1. Clone into ComfyUI custom_nodes
-
+### 1. Copier dans custom_nodes
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/iFayens/ComfyUI-PuLID-Flux2.git
-cd ComfyUI-PuLID-Flux2
+git clone https://github.com/iFayens/ComfyUI-PuLID-Flux2.git ComfyUI-PuLID-Flux2Klein
+cd ComfyUI-PuLID-Flux2Klein
 pip install -r requirements.txt
 ```
 
-### 2. Install EVA-CLIP (downloads automatically on first run)
+### 2. EVA-CLIP (automatique)
+EVA02-CLIP-L-14-336 se télécharge automatiquement au premier lancement via `open_clip` (~800 Mo).
 
-```bash
-python -c "import open_clip; open_clip.create_model_and_transforms('EVA02-L-14-336', pretrained='merged2b_s6b_b61k')"
-```
+> ⚠️ **Ne pas** installer `eva_clip` depuis GitHub — ce package est cassé et non requis.
+> `open-clip-torch` est déjà inclus dans `requirements.txt`.
 
-### 3. Download InsightFace AntelopeV2
+### 3. Télécharger les modèles
 
-Download from: https://huggingface.co/MonsterMMORPG/InsightFace_AntelopeV2  
-Place in: `ComfyUI/models/insightface/models/antelopev2/`
+#### InsightFace AntelopeV2
+Télécharger depuis : https://huggingface.co/MonsterMMORPG/InsightFace_AntelopeV2
+Placer dans : `ComfyUI/models/insightface/models/antelopev2/`
 
-### 4. Download PuLID weights (Flux.1 compatible, Klein 9B)
+#### EVA02-CLIP-L-14-336
+Téléchargement automatique au premier lancement.
+Ou manuellement depuis HuggingFace → placer dans `ComfyUI/models/clip/`
 
-```
-https://huggingface.co/guozinan/PuLID/resolve/main/pulid_flux_v0.9.1.safetensors
-```
-Place in: `ComfyUI/models/pulid/`
+#### Poids PuLID pour Flux.2 Klein
+> ⚠️ Il n'existe pas encore de poids pré-entraînés officiels pour Flux.2 Klein.
+> 
+> **Option A** : Utiliser les poids PuLID-Flux (Flux.1) comme point de départ
+>   - Télécharger depuis : https://huggingface.co/guozinan/PuLID
+>   - Placer dans : `ComfyUI/models/pulid/`
+>   - Note: compatibilité partielle (dim=4096 → Klein 9B uniquement sans ajustement)
+>
+> **Option B** : Lancer sans poids (le node crée un IDFormer aléatoire)
+>   - Résultats aléatoires mais le node fonctionnera sans erreur
+>   - Utile pour tester l'intégration avant d'avoir des poids fine-tunés
 
 ---
 
-## 🔌 Nodes
+## 🔌 Workflow ComfyUI
+
+```
+[Image de référence]
+       │
+[PuLID Klein — Load InsightFace]─────────────┐
+[PuLID Klein — Load EVA-CLIP]────────────────┤
+[PuLID Klein — Load Model]───────────────────┤
+                                             ▼
+[Ton modèle Flux.2 Klein] ──────► [Apply PuLID ✦ Flux.2 Klein] ──► [KSampler / modèle patché]
+                                             │
+                                    weight, start_at, end_at
+```
+
+### Nodes disponibles
 
 | Node | Description |
 |---|---|
-| `Load InsightFace (PuLID Klein)` | Loads AntelopeV2 face detector |
-| `Load EVA-CLIP (PuLID Klein)` | Loads EVA02-CLIP-L-14-336 visual encoder |
-| `Load PuLID Flux.2 Model` | Loads PuLID weights (.safetensors) |
-| **`Apply PuLID ✦ Flux.2`** | Main node — patches Flux.2 Klein model |
-| `PuLID Klein — Face Debug Preview` | Visualizes detected faces (debug) |
+| `Load InsightFace (PuLID Klein)` | Charge le détecteur de visage AntelopeV2 |
+| `Load EVA-CLIP (PuLID Klein)` | Charge l'encodeur visuel EVA02-CLIP |
+| `Load PuLID Flux.2 Klein Model` | Charge les poids PuLID (.safetensors/.pt) |
+| `Apply PuLID ✦ Flux.2 Klein` | **Node principal** — patch le modèle Flux.2 Klein |
+| `PuLID Klein — Face Debug Preview` | Visualise les visages détectés |
 
----
+### Paramètres de Apply
 
-## ⚙️ Recommended Parameters
-
-| Parameter | Value | Notes |
+| Paramètre | Défaut | Description |
 |---|---|---|
-| `weight` | `0.7` | Start here, adjust to taste |
-| `start_at` | `0.0` | Let PuLID guide from the start |
-| `end_at` | `1.0` | Full generation coverage |
-| `face_index` | `0` | Use largest detected face |
-
-> ⚠️ Keep `weight` below 0.8 to avoid image quality degradation with non-native weights.
+| `weight` | 0.8 | Force de l'injection (0=off, 1.5=max) |
+| `start_at` | 0.0 | Début de l'injection (0.0 = dès le début) |
+| `end_at` | 1.0 | Fin de l'injection |
+| `face_index` | 0 | Quel visage utiliser si plusieurs détectés |
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ Comment ça marche
+
+### Pipeline complet
 
 ```
-Reference image
+Image référence
     │
     ├──► InsightFace AntelopeV2
-    │         └─► 512-dim face embedding
+    │         └─► embedding 512-dim (identité faciale)
     │
     └──► EVA02-CLIP-L-14-336
-              └─► 768-dim visual features
+              └─► features 768-dim (features visuelles haute-niveau)
                        │
                        ▼
-              IDFormer (MLP + PerceiverCA)
+              IDFormer (MLP + Perceiver)
                        │
                        ▼
               id_tokens [B, 4, dim]
                        │
-              ┌────────┴──────────────────────┐
-              │  Injection into Flux.2 Klein   │
-              │                                │
-              │  double_blocks[0,2,4,...]:      │
-              │    img += w * PerceiverCA(...)  │
-              └────────────────────────────────┘
-                       │
-                       ▼
-              Generated image with consistent identity
+              ┌────────┴────────────────────────────────┐
+              │  Injection dans Flux.2 Klein             │
+              │                                          │
+              │  double_blocks[0,2,4,...]:               │
+              │    img_tokens += w * PerceiverCA(img, id)│
+              │                                          │
+              │  single_blocks[0,4,8,...]:               │
+              │    out[:n_img] += w * PerceiverCA(x, id) │
+              └──────────────────────────────────────────┘
 ```
+
+### Adaptations spécifiques à Klein
+
+1. **Shared modulation** : Flux.2 Klein partage les paramètres AdaLayerNorm entre tous les blocs.
+   → L'injection PuLID agit *après* la modulation, donc indépendamment.
+
+2. **single_transformer_blocks** : Dans Klein, ces blocs fusionnent `attn.to_qkv_mlp_proj`.
+   → On injecte sur les tokens de sortie (pas sur Q/K/V), ce qui est plus stable.
+
+3. **Conditioning shape** : Qwen3 produit [B, 512, 12288], projeté en [B, 512, dim] par `txt_in`.
+   → PuLID n'interagit pas avec le text stream, uniquement avec img_stream.
+
+4. **In-context conditioning** : Klein passe l'image de référence comme tokens additionnels.
+   → Le n_img estimé = total_tokens - 512 (txt_tokens).
 
 ---
 
-## 🚀 Training Native Klein Weights
+## ⚡ Entraîner des poids dédiés (avancé)
 
-This repo includes the **first training script for PuLID on Flux.2 Klein**.
+Pour de meilleurs résultats, il faudra entraîner l'IDFormer sur Flux.2 Klein :
 
 ```bash
-# Step 1: Prepare dataset
-python prepare_dataset.py --output ./dataset --source celeba --max_images 2000
+# Dataset : ~1000 images portrait avec captions
+# Utiliser Consistent Character Creator 3.5 pour générer le dataset
 
-# Step 2: Train
 python train_pulid_klein.py \
-  --dataset ./dataset/filtered \
-  --output ./output \
-  --comfyui_path C:/AI/ComfyUI \
-  --dim 4096 \
-  --epochs 20 \
-  --batch_size 4
+  --model black-forest-labs/FLUX.2-klein-4B \
+  --dataset ./face_dataset \
+  --output ./pulid_klein_4b.safetensors \
+  --epochs 10 \
+  --lr 1e-4
 ```
 
-See [README_TRAINING.md](README_TRAINING.md) for full details.
+> Un script d'entraînement `train_pulid_klein.py` sera ajouté prochainement.
 
 ---
 
-## 🛠️ Requirements
+## 🐛 Dépannage
 
-- ComfyUI (latest)
-- Python 3.10+
-- CUDA GPU (12 GB+ VRAM recommended)
-- PyTorch 2.4.0+cu121
+**"Aucun visage détecté"**
+→ Vérifier que AntelopeV2 est bien dans `models/insightface/models/antelopev2/`
+→ Utiliser le node `PuLID Klein — Face Debug Preview` pour visualiser
 
-```
-insightface>=0.7.3
-onnxruntime-gpu>=1.16.0
-open_clip_torch>=3.2.0
-safetensors>=0.4.0
-opencv-python
-numpy
-```
+**"EVA-CLIP non disponible"**
+→ `pip install git+https://github.com/baaivision/EVA.git#subdirectory=EVA-CLIP`
 
----
+**"Impossible de trouver double_blocks"**
+→ Votre version de ComfyUI/diffusers peut nommer les blocs différemment.
+→ Ouvrir une issue avec le nom exact des attributs de votre modèle.
 
-## 📋 Roadmap
-
-- [x] Custom node for Flux.2 Klein 4B / 9B
-- [x] EVA-CLIP integration via open_clip
-- [x] InsightFace CUDA support
-- [x] Training dataset preparation script
-- [x] Training script (Phase 1 — embedding only)
-- [ ] Native Klein-trained weights (community training)
-- [ ] Training script Phase 2 (full pipeline with Flux)
-- [ ] HuggingFace model release
-- [ ] Single blocks re-activation after training
+**Résultats non cohérents**
+→ Aucun poids pré-entraîné sur Klein n'existe encore → entraîner ou attendre la communauté.
+→ Essayer weight=0.9, start_at=0.1, end_at=0.9
 
 ---
 
-## 🙏 Credits
+## 📄 Licence
 
-- **PuLID original**: [ToTheBeginning/PuLID](https://github.com/ToTheBeginning/PuLID) (Apache 2.0)
-- **PuLID Flux.1**: [lldacing/ComfyUI_PuLID_Flux_ll](https://github.com/lldacing/ComfyUI_PuLID_Flux_ll)
-- **Flux.2 Klein**: [Black Forest Labs](https://blackforestlabs.ai)
-- **EVA-CLIP**: [BAAI](https://github.com/baaivision/EVA)
-- **Adaptation for Flux.2 Klein**: [@iFayens](https://github.com/iFayens) — March 2026
-
----
-
-## 📄 License
-
-MIT License — see [LICENSE](LICENSE) for details.
-
----
-
-*If this project helped you, consider giving it a ⭐ on GitHub!*
+MIT — basé sur PuLID original (Apache 2.0) par ToTheBeginning/PuLID
+et ComfyUI-PuLID-Flux par balazik/lldacing.

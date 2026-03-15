@@ -1,8 +1,9 @@
 insightface>=0.7.3
 onnxruntime-gpu>=1.16.0
-facenet-pytorch
+# If onnxruntime-gpu fails, use: pip install onnxruntime
+open-clip-torch>=3.2.0
+# EVA02-CLIP-L-14-336 downloads automatically on first run via open_clip (~800MB)
+# DO NOT install eva_clip from GitHub — that package is broken
 safetensors>=0.4.0
 opencv-python
 numpy
-# EVA-CLIP (installer manuellement si auto-install échoue):
-# pip install git+https://github.com/baaivision/EVA.git#subdirectory=EVA-CLIP
