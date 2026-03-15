@@ -1,9 +1,14 @@
+# ⚠️ Do NOT run pip install -r requirements.txt if you already have a working ComfyUI
+# Install only: pip install insightface onnxruntime-gpu open-clip-torch safetensors ml_dtypes==0.3.2
+
 insightface>=0.7.3
 onnxruntime-gpu>=1.16.0
-# If onnxruntime-gpu fails, use: pip install onnxruntime
+# If onnxruntime-gpu fails: pip install onnxruntime
 open-clip-torch>=3.2.0
-# EVA02-CLIP-L-14-336 downloads automatically on first run via open_clip (~800MB)
+# EVA02-CLIP-L-14-336 downloads automatically on first run (~800MB)
 # DO NOT install eva_clip from GitHub — that package is broken
 safetensors>=0.4.0
 opencv-python
 numpy
+ml_dtypes==0.3.2
+# Pin ml_dtypes to avoid: AttributeError: module 'ml_dtypes' has no attribute 'float4_e2m1fn'
