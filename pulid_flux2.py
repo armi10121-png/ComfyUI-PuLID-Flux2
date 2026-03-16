@@ -790,9 +790,9 @@ __supported_models__ = ["Flux.2 Klein 4B", "Flux.2 Klein 9B", "Flux.2 Dev 32B"]
 __changelog__ = "v0.2.0: Add Flux.2 Dev 32B support with auto model detection"
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PuLIDInsightFaceLoader" : "Load InsightFace (PuLID Klein)",
-    "PuLIDEVACLIPLoader"     : "Load EVA-CLIP (PuLID Klein)",
-    "PuLIDModelLoader"       : "Load PuLID Flux.2 Klein Model",
+    "PuLIDInsightFaceLoader" : "Load InsightFace (PuLID)",
+    "PuLIDEVACLIPLoader"     : "Load EVA-CLIP (PuLID)",
+    "PuLIDModelLoader"       : "Load PuLID ✦ Flux.2",
     "ApplyPuLIDFlux2"        : "Apply PuLID ✦ Flux.2",
     "PuLIDFacePreview"       : "PuLID — Face Debug Preview",
 }
