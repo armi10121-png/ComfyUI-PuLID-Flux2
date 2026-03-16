@@ -11,4 +11,8 @@ safetensors>=0.4.0
 opencv-python
 numpy
 ml_dtypes==0.3.2
+<<<<<<< HEAD
 # Pin ml_dtypes to avoid: AttributeError: module 'ml_dtypes' has no attribute 'float4_e2m1fn'
+=======
+# Pin ml_dtypes to avoid: AttributeError: module 'ml_dtypes' has no attribute 'float4_e2m1fn'
+>>>>>>> 347daed6af45208abadbc5aaa4993bd0b0bea1a5
