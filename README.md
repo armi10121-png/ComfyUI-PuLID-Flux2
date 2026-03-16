@@ -54,8 +54,15 @@ Previous PuLID nodes only support Flux.1 Dev. This project is the **first** to a
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/iFayens/ComfyUI-PuLID-Flux2.git ComfyUI-PuLID-Flux2Klein
-cd ComfyUI-PuLID-Flux2Klein
+git clone https://github.com/iFayens/ComfyUI-PuLID-Flux2.git
+cd ComfyUI-PuLID-Flux2
+```
+
+### Update
+
+```bash
+cd ComfyUI/custom_nodes/ComfyUI-PuLID-Flux2
+git pull
 ```
 
 > ⚠️ **If you already have a working ComfyUI**, install only the required packages:
