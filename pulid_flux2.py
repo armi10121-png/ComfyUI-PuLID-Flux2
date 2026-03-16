@@ -1,9 +1,9 @@
 """
-ComfyUI-PuLID-Flux2Klein
+ComfyUI-PuLID-Flux2
 ========================
-Custom node PuLID adapté pour FLUX.2 Klein (4B / 9B).
+Custom node PuLID for FLUX.2 — supports Klein 4B, Klein 9B, Dev 32B (distilled & base).
 
-Architecture de FLUX.2 Klein (source: Black Forest Labs / HuggingFace diffusers):
+Architecture de FLUX.2 (source: Black Forest Labs / HuggingFace diffusers):
   - 8 double_blocks  (transformer_blocks)   → flux2 dev
   - 5 double_blocks  (transformer_blocks)   → klein 4B
   - 24 single_blocks (single_transformer_blocks) → flux2 dev
@@ -148,12 +148,12 @@ class IDFormer(nn.Module):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# PuLID Flux2Klein  (ensemble poids du module)
+# PuLID Flux2 (main weights module)
 # ──────────────────────────────────────────────────────────────────────────────
 
-class PuLIDFlux2Klein(nn.Module):
+class PuLIDFlux2(nn.Module):
     """
-    Conteneur principal du module PuLID pour Flux.2 Klein.
+    Conteneur principal du module PuLID pour Flux.2 (Klein 4B/9B, Dev 32B).
     Contient :
       - id_former      : IDFormer qui projette face→tokens
       - pulid_ca_double: PerceiverCA injectés dans les double_blocks
@@ -186,7 +186,7 @@ class PuLIDFlux2Klein(nn.Module):
         ])
 
     @classmethod
-    def from_pretrained(cls, path: str, map_location="cpu") -> "PuLIDFlux2Klein":
+    def from_pretrained(cls, path: str, map_location="cpu") -> "PuLIDFlux2":
         state = torch.load(path, map_location=map_location, weights_only=True)
         # Déterminer la dim depuis les poids
         try:
@@ -210,18 +210,18 @@ def load_eva_clip(device):
     try:
         import open_clip
 
-        logging.info("[PuLID-Flux2Klein] Chargement EVA02-CLIP-L-14-336 (merged2b_s6b_b61k)...")
+        logging.info("[PuLID-Flux2] Chargement EVA02-CLIP-L-14-336 (merged2b_s6b_b61k)...")
         model, _, _ = open_clip.create_model_and_transforms(
             "EVA02-L-14-336",
             pretrained="merged2b_s6b_b61k",
         )
         visual = model.visual
         visual.eval().to(device)
-        logging.info("[PuLID-Flux2Klein] EVA02-CLIP-L-14-336 chargé ✅")
+        logging.info("[PuLID-Flux2] EVA02-CLIP-L-14-336 chargé ✅")
         return visual
 
     except Exception as e:
-        logging.warning(f"[PuLID-Flux2Klein] EVA-CLIP non disponible: {e}")
+        logging.warning(f"[PuLID-Flux2] EVA-CLIP non disponible: {e}")
         return None
 
 
@@ -261,7 +261,6 @@ def encode_image_eva_clip(eva_clip, image: torch.Tensor,
 
 def _get_flux2_inner_model(model):
     """Remonte jusqu'au vrai objet transformer de ComfyUI."""
-    # ComfyUI enveloppe le modèle dans ModelPatcher → model.model → diffusion_model
     if hasattr(model, "model"):
         m = model.model
     else:
@@ -271,11 +270,38 @@ def _get_flux2_inner_model(model):
     return m
 
 
-def patch_flux2klein_forward(flux_model, pulid_module, id_embedding,
+def _detect_flux2_variant(dm) -> tuple:
+    """
+    Détecte automatiquement le variant Flux.2 et sa dimension cachée.
+    Retourne (variant_name, hidden_dim)
+    - Klein 4B  : 5 double,  20 single, dim=3072
+    - Klein 9B  : 8 double,  24 single, dim=4096
+    - Dev 32B   : 8 double,  48 single, dim=6144
+    """
+    double_blocks = getattr(dm, "transformer_blocks", None) or getattr(dm, "double_blocks", [])
+    single_blocks = getattr(dm, "single_transformer_blocks", None) or getattr(dm, "single_blocks", [])
+
+    n_double = len(double_blocks)
+    n_single = len(single_blocks)
+
+    logging.info(f"[PuLID-Flux2] Detected: {n_double} double blocks, {n_single} single blocks")
+
+    if n_double <= 5 and n_single <= 20:
+        return "klein_4b", 3072
+    elif n_double <= 8 and n_single <= 24:
+        return "klein_9b", 4096
+    elif n_single >= 40:
+        return "flux2_dev", 6144
+    else:
+        logging.warning(f"[PuLID-Flux2] Unknown variant ({n_double}d/{n_single}s), defaulting to klein_9b")
+        return "klein_9b", 4096
+
+
+def patch_flux2_forward(flux_model, pulid_module, id_embedding,
                               weight, sigma_start, sigma_end):
     """
-    Injecte les embeddings PuLID dans le forward pass de Flux.2 Klein.
-    Utilise le système de patching ComfyUI (set_model_patch / model_options).
+    Injecte les embeddings PuLID dans le forward pass de Flux.2.
+    Compatible avec Klein 4B, Klein 9B et Dev 32B.
 
     Stratégie :
       - Pour chaque double_block[i] (i % double_interval == 0) :
@@ -286,7 +312,33 @@ def patch_flux2klein_forward(flux_model, pulid_module, id_embedding,
 
     # Stocker les données dans le modèle (pattern PuLID original)
     dm = _get_flux2_inner_model(flux_model)
-    dm._pulid_klein_data = {
+
+    # Détecter automatiquement le variant et la dim
+    variant, detected_dim = _detect_flux2_variant(dm)
+    logging.info(f"[PuLID-Flux2] Model variant: {variant}, dim: {detected_dim}")
+
+    # Redimensionner les PerceiverCA si la dim détectée est différente
+    current_dim = pulid_module.id_former.latents.shape[-1]
+    if current_dim != detected_dim:
+        logging.warning(
+            f"[PuLID-Flux2] PuLID dim ({current_dim}) != model dim ({detected_dim}). "
+            f"Adapting PerceiverCA on-the-fly..."
+        )
+        device = pulid_module.id_former.latents.device
+        dtype  = pulid_module.id_former.latents.dtype
+        # Recréer les PerceiverCA avec la bonne dim
+        from torch import nn
+        pulid_module.pulid_ca_double = nn.ModuleList([
+            PerceiverAttentionCA(dim=detected_dim).to(device, dtype=dtype)
+            for _ in range(len(pulid_module.pulid_ca_double))
+        ])
+        pulid_module.pulid_ca_single = nn.ModuleList([
+            PerceiverAttentionCA(dim=detected_dim).to(device, dtype=dtype)
+            for _ in range(len(pulid_module.pulid_ca_single))
+        ])
+        logging.info(f"[PuLID-Flux2] PerceiverCA adapted to dim={detected_dim} ✅")
+
+    dm._pulid_flux2_data = {
         "module"     : pulid_module,
         "embedding"  : id_embedding,   # [B, num_tokens, dim]
         "weight"     : weight,
@@ -299,7 +351,7 @@ def patch_flux2klein_forward(flux_model, pulid_module, id_embedding,
 
     def make_double_patch(block_idx, ca_idx):
         def patched_forward(img, txt, vec, **kwargs):
-            data = getattr(dm, "_pulid_klein_data", None)
+            data = getattr(dm, "_pulid_flux2_data", None)
             out_img, out_txt = original_double_forwards[block_idx](
                 img, txt, vec, **kwargs
             )
@@ -328,7 +380,7 @@ def patch_flux2klein_forward(flux_model, pulid_module, id_embedding,
         blocks = dm.double_blocks
     else:
         blocks = []
-        logging.warning("[PuLID-Flux2Klein] Impossible de trouver double_blocks!")
+        logging.warning("[PuLID-Flux2] Impossible de trouver double_blocks!")
 
     double_interval = pulid_module.double_interval
     ca_idx = 0
@@ -343,7 +395,7 @@ def patch_flux2klein_forward(flux_model, pulid_module, id_embedding,
 
     def make_single_patch(block_idx, ca_idx):
         def patched_forward(x, vec, **kwargs):
-            data = getattr(dm, "_pulid_klein_data", None)
+            data = getattr(dm, "_pulid_flux2_data", None)
             out = original_single_forwards[block_idx](x, vec, **kwargs)
             if data is None:
                 return out
@@ -375,7 +427,7 @@ def patch_flux2klein_forward(flux_model, pulid_module, id_embedding,
         s_blocks = dm.single_blocks
     else:
         s_blocks = []
-        logging.warning("[PuLID-Flux2Klein] Impossible de trouver single_blocks!")
+        logging.warning("[PuLID-Flux2] Impossible de trouver single_blocks!")
 
     # Single blocks désactivés pour éviter contamination globale
     # (poids non entraînés sur Klein → artefacts visuels)
@@ -389,17 +441,17 @@ def patch_flux2klein_forward(flux_model, pulid_module, id_embedding,
             blocks[i].forward = fn
         for i, fn in original_single_forwards.items():
             s_blocks[i].forward = fn
-        if hasattr(dm, "_pulid_klein_data"):
-            del dm._pulid_klein_data
+        if hasattr(dm, "_pulid_flux2_data"):
+            del dm._pulid_flux2_data
 
     return unpatch
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# NODE 1 : Chargeur InsightFace
+# NODE 1 : InsightFace Loader
 # ──────────────────────────────────────────────────────────────────────────────
 
-class PuLIDKleinInsightFaceLoader:
+class PuLIDInsightFaceLoader:
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -411,14 +463,14 @@ class PuLIDKleinInsightFaceLoader:
     RETURN_TYPES  = ("INSIGHTFACE",)
     RETURN_NAMES  = ("face_analysis",)
     FUNCTION      = "load"
-    CATEGORY      = "PuLID-Flux2Klein"
+    CATEGORY      = "PuLID-Flux2"
 
     def load(self, provider):
         try:
             from insightface.app import FaceAnalysis
         except ImportError:
             raise ImportError(
-                "[PuLID-Flux2Klein] insightface not installed. "
+                "[PuLID-Flux2] insightface not installed. "
                 "Run: pip install insightface onnxruntime-gpu"
             )
 
@@ -435,29 +487,29 @@ class PuLIDKleinInsightFaceLoader:
                 model.prepare(ctx_id=0, det_size=(640, 640))
                 if model_name == "buffalo_l":
                     logging.warning(
-                        "[PuLID-Flux2Klein] AntelopeV2 not found, using buffalo_l as fallback. "
+                        "[PuLID-Flux2] AntelopeV2 not found, using buffalo_l as fallback. "
                         "For best results, install AntelopeV2 from: "
                         "https://huggingface.co/MonsterMMORPG/InstantID_Models/tree/main/models/antelopev2"
                     )
                 else:
-                    logging.info("[PuLID-Flux2Klein] InsightFace AntelopeV2 loaded ✅")
+                    logging.info("[PuLID-Flux2] InsightFace AntelopeV2 loaded ✅")
                 return (model,)
             except Exception as e:
-                logging.warning(f"[PuLID-Flux2Klein] Could not load {model_name}: {e}")
+                logging.warning(f"[PuLID-Flux2] Could not load {model_name}: {e}")
                 continue
 
         raise RuntimeError(
-            "[PuLID-Flux2Klein] Could not load any InsightFace model. "
+            "[PuLID-Flux2] Could not load any InsightFace model. "
             "Please install AntelopeV2 from: "
             "https://huggingface.co/MonsterMMORPG/InstantID_Models/tree/main/models/antelopev2"
         )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# NODE 2 : Chargeur EVA-CLIP
+# NODE 2 : EVA-CLIP Loader
 # ──────────────────────────────────────────────────────────────────────────────
 
-class PuLIDKleinEVACLIPLoader:
+class PuLIDEVACLIPLoader:
     @classmethod
     def INPUT_TYPES(cls):
         return {"required": {}}
@@ -465,24 +517,24 @@ class PuLIDKleinEVACLIPLoader:
     RETURN_TYPES  = ("EVA_CLIP",)
     RETURN_NAMES  = ("eva_clip",)
     FUNCTION      = "load"
-    CATEGORY      = "PuLID-Flux2Klein"
+    CATEGORY      = "PuLID-Flux2"
 
     def load(self):
         device = comfy.model_management.get_torch_device()
         model  = load_eva_clip(device)
         if model is None:
             raise RuntimeError(
-                "[PuLID-Flux2Klein] EVA-CLIP non disponible. "
+                "[PuLID-Flux2] EVA-CLIP non disponible. "
                 "Installez eva_clip: pip install git+https://github.com/baaivision/EVA.git#subdirectory=EVA-CLIP"
             )
         return (model,)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# NODE 3 : Chargeur poids PuLID-Flux2Klein
+# NODE 3 : PuLID Model Loader
 # ──────────────────────────────────────────────────────────────────────────────
 
-class PuLIDKleinModelLoader:
+class PuLIDModelLoader:
     @classmethod
     def INPUT_TYPES(cls):
         pulid_files = [
@@ -493,25 +545,29 @@ class PuLIDKleinModelLoader:
         return {
             "required": {
                 "pulid_file": (pulid_files,),
-                "model_variant": (["klein_4B (dim=3072)", "klein_9B (dim=4096)"],),
+                "model_variant": (["auto (recommended)", "klein_4B (dim=3072)", "klein_9B (dim=4096)", "flux2_dev (dim=6144)"],),
             }
         }
 
     RETURN_TYPES  = ("PULID_KLEIN",)
     RETURN_NAMES  = ("pulid_model",)
     FUNCTION      = "load"
-    CATEGORY      = "PuLID-Flux2Klein"
+    CATEGORY      = "PuLID-Flux2"
 
     def load(self, pulid_file, model_variant):
         path = os.path.join(PULID_DIR, pulid_file)
-        dim  = 3072 if "4B" in model_variant else 4096
+        # Auto = on laisse la détection au runtime, on utilise dim=4096 par défaut
+        if "4B" in model_variant:
+            dim = 3072
+        else:
+            dim = 4096  # Klein 9B, Dev 32B, et auto utilisent tous dim=4096
 
         if not os.path.exists(path):
             logging.warning(
-                f"[PuLID-Flux2Klein] Fichier {path} non trouvé. "
+                f"[PuLID-Flux2] Fichier {path} non trouvé. "
                 "Création d'un modèle vierge (non entraîné)."
             )
-            model = PuLIDFlux2Klein(dim=dim)
+            model = PuLIDFlux2(dim=dim)
         else:
             # Charger safetensors ou torch
             if path.endswith(".safetensors"):
@@ -519,20 +575,20 @@ class PuLIDKleinModelLoader:
                 state = load_file(path, device="cpu")
                 dim_detected = state.get("id_former.latents",
                                          torch.zeros(1, 1, dim)).shape[-1]
-                model = PuLIDFlux2Klein(dim=dim_detected)
+                model = PuLIDFlux2(dim=dim_detected)
                 model.load_state_dict(state, strict=False)
             else:
-                model = PuLIDFlux2Klein.from_pretrained(path)
+                model = PuLIDFlux2.from_pretrained(path)
 
         model.eval()
         return (model,)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# NODE 4 : Application PuLID sur le modèle Flux.2 Klein
+# NODE 4 : Apply PuLID on Flux.2 model
 # ──────────────────────────────────────────────────────────────────────────────
 
-class ApplyPuLIDFlux2Klein:
+class ApplyPuLIDFlux2:
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -554,7 +610,7 @@ class ApplyPuLIDFlux2Klein:
     RETURN_TYPES  = ("MODEL",)
     RETURN_NAMES  = ("model",)
     FUNCTION      = "apply"
-    CATEGORY      = "PuLID-Flux2Klein"
+    CATEGORY      = "PuLID-Flux2"
 
     def apply(self, model, pulid_model, eva_clip, face_analysis,
               image, weight, start_at, end_at, face_index=0):
@@ -569,7 +625,7 @@ class ApplyPuLIDFlux2Klein:
 
         faces = face_analysis.get(img_np)
         if not faces:
-            logging.warning("[PuLID-Flux2Klein] Aucun visage détecté. Modèle non modifié.")
+            logging.warning("[PuLID-Flux2] Aucun visage détecté. Modèle non modifié.")
             return (model,)
 
         # Trier par taille de bounding box, choisir face_index
@@ -611,22 +667,38 @@ class ApplyPuLIDFlux2Klein:
         sigma_start = start_at
         sigma_end   = end_at
 
+            # ── 4. Patcher le modèle via ComfyUI ModelPatcher ─────────────────
         # Cleanup: supprimer les anciens patches pour éviter l'accumulation
         # qui cause l'image verte quand on change le weight entre les runs
         dm = _get_flux2_inner_model(work_model)
-        if hasattr(dm, "_pulid_klein_unpatchers"):
-            logging.info("[PuLID-Flux2Klein] Cleanup patches précédents...")
-            for old_unpatch in dm._pulid_klein_unpatchers:
+        if hasattr(dm, "_pulid_flux2_unpatchers"):
+            logging.info("[PuLID-Flux2] Cleanup patches précédents...")
+            for old_unpatch in dm._pulid_flux2_unpatchers:
                 try:
                     old_unpatch()
                 except Exception:
                     pass
-            dm._pulid_klein_unpatchers = []
-        if hasattr(dm, "_pulid_klein_data"):
-            del dm._pulid_klein_data
+            dm._pulid_flux2_unpatchers = []
+        if hasattr(dm, "_pulid_flux2_data"):
+            del dm._pulid_flux2_data
+
+        # Détecter la dim du modèle avant le patch
+        dm_pre = _get_flux2_inner_model(work_model)
+        _, detected_dim = _detect_flux2_variant(dm_pre)
+
+        # Projeter les id_tokens vers la dim du modèle si nécessaire
+        id_token_dim = id_tokens.shape[-1]
+        if id_token_dim != detected_dim:
+            logging.info(
+                f"[PuLID-Flux2] Projecting id_tokens {id_token_dim} → {detected_dim}"
+            )
+            proj = nn.Linear(id_token_dim, detected_dim, bias=False).to(device, dtype=dtype)
+            torch.nn.init.normal_(proj.weight, std=0.01)
+            with torch.no_grad():
+                id_tokens = proj(id_tokens)
 
         # Appliquer le nouveau patch
-        unpatch = patch_flux2klein_forward(
+        unpatch = patch_flux2_forward(
             work_model,
             pulid_model,
             id_tokens,
@@ -636,13 +708,16 @@ class ApplyPuLIDFlux2Klein:
         )
 
         # Stocker unpatch pour cleanup au prochain run
-        if not hasattr(dm, "_pulid_klein_unpatchers"):
-            dm._pulid_klein_unpatchers = []
-        dm._pulid_klein_unpatchers.append(unpatch)
+        if not hasattr(dm, "_pulid_flux2_unpatchers"):
+            dm._pulid_flux2_unpatchers = []
+        dm._pulid_flux2_unpatchers.append(unpatch)
 
+        dm = _get_flux2_inner_model(work_model)
+        variant, detected_dim = _detect_flux2_variant(dm)
         logging.info(
-            f"[PuLID-Flux2Klein] ✅ PuLID appliqué. "
-            f"weight={weight}, face_idx={face_idx}/{len(faces)-1}, "
+            f"[PuLID-Flux2] ✅ PuLID applied. "
+            f"model={variant} (dim={detected_dim}), weight={weight}, "
+            f"face_idx={face_idx}/{len(faces)-1}, "
             f"sigma=[{sigma_start:.2f},{sigma_end:.2f}]"
         )
 
@@ -653,7 +728,7 @@ class ApplyPuLIDFlux2Klein:
 # NODE 5 (bonus) : Visualisation du visage détecté
 # ──────────────────────────────────────────────────────────────────────────────
 
-class PuLIDKleinFacePreview:
+class PuLIDFacePreview:
     """
     Affiche les bounding boxes détectées sur l'image d'entrée.
     Utile pour débugger la détection de visage.
@@ -670,14 +745,14 @@ class PuLIDKleinFacePreview:
     RETURN_TYPES  = ("IMAGE",)
     RETURN_NAMES  = ("debug_image",)
     FUNCTION      = "preview"
-    CATEGORY      = "PuLID-Flux2Klein"
+    CATEGORY      = "PuLID-Flux2"
     OUTPUT_NODE   = True
 
     def preview(self, face_analysis, image):
         try:
             import cv2
         except ImportError:
-            logging.warning("[PuLID-Flux2Klein] cv2 non disponible pour preview.")
+            logging.warning("[PuLID-Flux2] cv2 non disponible pour preview.")
             return (image,)
 
         img_np  = (image[0].numpy() * 255).astype(np.uint8).copy()
@@ -700,17 +775,24 @@ class PuLIDKleinFacePreview:
 # ──────────────────────────────────────────────────────────────────────────────
 
 NODE_CLASS_MAPPINGS = {
-    "PuLIDKleinInsightFaceLoader" : PuLIDKleinInsightFaceLoader,
-    "PuLIDKleinEVACLIPLoader"     : PuLIDKleinEVACLIPLoader,
-    "PuLIDKleinModelLoader"       : PuLIDKleinModelLoader,
-    "ApplyPuLIDFlux2Klein"        : ApplyPuLIDFlux2Klein,
-    "PuLIDKleinFacePreview"       : PuLIDKleinFacePreview,
+    "PuLIDInsightFaceLoader" : PuLIDInsightFaceLoader,
+    "PuLIDEVACLIPLoader"     : PuLIDEVACLIPLoader,
+    "PuLIDModelLoader"       : PuLIDModelLoader,
+    "ApplyPuLIDFlux2"        : ApplyPuLIDFlux2,
+    "PuLIDFacePreview"       : PuLIDFacePreview,
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Version info
+# ──────────────────────────────────────────────────────────────────────────────
+__version__ = "0.2.0"
+__supported_models__ = ["Flux.2 Klein 4B", "Flux.2 Klein 9B", "Flux.2 Dev 32B"]
+__changelog__ = "v0.2.0: Add Flux.2 Dev 32B support with auto model detection"
+
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PuLIDKleinInsightFaceLoader" : "Load InsightFace (PuLID Klein)",
-    "PuLIDKleinEVACLIPLoader"     : "Load EVA-CLIP (PuLID Klein)",
-    "PuLIDKleinModelLoader"       : "Load PuLID Flux.2 Klein Model",
-    "ApplyPuLIDFlux2Klein"        : "Apply PuLID ✦ Flux.2 Klein",
-    "PuLIDKleinFacePreview"       : "PuLID Klein — Face Debug Preview",
+    "PuLIDInsightFaceLoader" : "Load InsightFace (PuLID Klein)",
+    "PuLIDEVACLIPLoader"     : "Load EVA-CLIP (PuLID Klein)",
+    "PuLIDModelLoader"       : "Load PuLID Flux.2 Klein Model",
+    "ApplyPuLIDFlux2"        : "Apply PuLID ✦ Flux.2",
+    "PuLIDFacePreview"       : "PuLID — Face Debug Preview",
 }

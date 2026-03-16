@@ -1,6 +1,6 @@
 """
-train_pulid_klein.py
-====================
+train_pulid.py
+==============
 Entraîne le module PuLID (IDFormer + PerceiverCA) sur Flux.2 Klein.
 
 Ce script est le PREMIER script d'entraînement PuLID dédié à Flux.2 Klein.
