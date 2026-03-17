@@ -624,8 +624,12 @@ class ApplyPuLIDFlux2:
 
         # ── 3. IDFormer → tokens embedding ───────────────────────────────
         pulid_model = pulid_model.to(device, dtype=dtype)
+        
+        # Utiliser autocast pour gérer les conversions de dtype automatiquement
+        device_type = 'cuda' if device.type == 'cuda' else 'cpu'
         with torch.no_grad():
-            id_tokens = pulid_model.id_former(id_embed_raw, clip_embed)
+            with torch.autocast(device_type=device_type, dtype=torch.bfloat16, enabled=(device_type=='cuda')):
+                id_tokens = pulid_model.id_former(id_embed_raw, clip_embed)
             # id_tokens: [1, num_tokens, dim]
 
         # ── 4. Patcher le modèle via ComfyUI ModelPatcher ─────────────────
@@ -636,7 +640,6 @@ class ApplyPuLIDFlux2:
         sigma_start = start_at
         sigma_end   = end_at
 
-            # ── 4. Patcher le modèle via ComfyUI ModelPatcher ─────────────────
         # Cleanup: supprimer les anciens patches pour éviter l'accumulation
         dm = _get_flux2_inner_model(work_model)
 
@@ -653,7 +656,7 @@ class ApplyPuLIDFlux2:
             del dm._pulid_flux2_data
 
         # Détecter la dim du modèle
-        _, detected_dim = _detect_flux2_variant(dm)
+        variant, detected_dim = _detect_flux2_variant(dm)
 
         # Projeter les id_tokens vers la dim du modèle si nécessaire
         id_token_dim = id_tokens.shape[-1]
@@ -665,8 +668,10 @@ class ApplyPuLIDFlux2:
             proj = nn.Linear(id_token_dim, detected_dim, bias=False).to(device, dtype=dtype)
             torch.nn.init.normal_(proj.weight, std=0.01)
 
+            device_type = 'cuda' if device.type == 'cuda' else 'cpu'
             with torch.no_grad():
-                id_tokens = proj(id_tokens)
+                with torch.autocast(device_type=device_type, dtype=torch.bfloat16, enabled=(device_type=='cuda')):
+                    id_tokens = proj(id_tokens)
 
         # Appliquer le nouveau patch
         unpatch = patch_flux2_forward(
@@ -684,8 +689,6 @@ class ApplyPuLIDFlux2:
 
         dm._pulid_flux2_unpatchers.append(unpatch)
 
-        dm = _get_flux2_inner_model(work_model)
-        variant, detected_dim = _detect_flux2_variant(dm)
         logging.info(
             f"[PuLID-Flux2] ✅ PuLID applied. "
             f"model={variant} (dim={detected_dim}), weight={weight}, "
