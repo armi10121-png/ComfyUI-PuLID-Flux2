@@ -1,14 +1,60 @@
+# Requirements pour entraînement PuLID Flux.2 Klein
+# Version testée : Python 3.10+
+
+# PyTorch avec CUDA (installer d'abord via le site officiel)
+# https://pytorch.org/get-started/locally/
 torch>=2.4.0
 torchvision>=0.19.0
+torchaudio>=2.4.0  # Optionnel mais recommandé
+
+# Accelerate & Diffusers (Flux.2)
 accelerate>=0.34.0
 diffusers>=0.31.0
 transformers>=4.44.0
+
+# Datasets (pour téléchargement automatique)
 datasets>=2.20.0
 huggingface_hub>=0.24.0
-open_clip_torch>=3.2.0
+
+# EVA-CLIP
+open_clip_torch>=2.24.0
+
+# InsightFace (détection de visages)
 insightface>=0.7.3
-onnxruntime-gpu>=1.16.0
+onnxruntime-gpu>=1.16.0  # Pour CUDA
+# Si CPU seulement : onnxruntime>=1.16.0
+
+# Safetensors (sauvegarde/chargement checkpoints)
 safetensors>=0.4.0
+
+# Traitement d'images
 Pillow>=10.0.0
-numpy>=1.24.0
+opencv-python>=4.8.0  # Optionnel mais utile
+
+# Utilitaires
+numpy>=1.24.0,<2.0.0  # Important : <2.0 pour compatibilité
 tqdm>=4.65.0
+
+# Optionnels mais recommandés
+scipy>=1.11.0
+scikit-learn>=1.3.0
+tensorboard>=2.15.0  # Pour monitoring
+
+# Notes d'installation :
+# =====================
+# 
+# 1. Installer PyTorch d'abord avec CUDA :
+#    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+#
+# 2. Puis installer le reste :
+#    pip install -r requirements_train.txt
+#
+# 3. Vérifier CUDA :
+#    python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}')"
+#
+# 4. GPU minimum recommandé :
+#    - Phase 1 : 12GB VRAM (RTX 3060 Ti, RTX 3090, RTX 4090)
+#    - Phase 2 : 24GB VRAM (RTX 3090, RTX 4090, A100)
+#
+# 5. Pour Vast.ai :
+#    Choisir une image avec CUDA 12.1+ et PyTorch pré-installé
