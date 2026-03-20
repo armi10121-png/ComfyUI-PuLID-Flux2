@@ -244,18 +244,56 @@ def load_eva_clip(device: torch.device):
     return model.to(device)
 
 
-def load_flux2_klein(model_path: str, device: torch.device):
+def load_flux2_model(model_path: str, variant: str, device: torch.device):
     """
-    Charge Flux.2 Klein via diffusers ou safetensors.
+    Charge Flux.2 (Klein, Dev ou Distilled) via diffusers ou safetensors.
     Le modèle est complètement gelé — seul PuLID sera entraîné.
+    
+    Args:
+        model_path: Chemin vers le modèle .safetensors
+        variant: "klein", "dev" ou "distilled"
+        device: Device PyTorch
+    
+    Returns:
+        tuple: (model, detected_variant, config_dict)
     """
-    log.info(f"Chargement Flux.2 Klein depuis : {model_path}")
+    log.info(f"Chargement Flux.2 {variant} depuis : {model_path}")
 
     if not os.path.exists(model_path):
         raise FileNotFoundError(
             f"Modèle Flux.2 non trouvé : {model_path}\n"
             "Télécharge depuis : https://huggingface.co/black-forest-labs"
         )
+
+    # Configurations par variante
+    configs = {
+        "klein": {
+            "hidden_size": 4096,
+            "num_heads": 32,
+            "depth": 8,
+            "depth_single_blocks": 24,
+            "guidance_embed": True,
+        },
+        "dev": {
+            "hidden_size": 3072,
+            "num_heads": 24,
+            "depth": 19,
+            "depth_single_blocks": 38,
+            "guidance_embed": True,
+        },
+        "distilled": {
+            "hidden_size": 3072,
+            "num_heads": 24,
+            "depth": 24,
+            "depth_single_blocks": 24,
+            "guidance_embed": False,
+        }
+    }
+    
+    if variant not in configs:
+        raise ValueError(f"Variant invalide: {variant}. Choix: klein, dev, distilled")
+    
+    config = configs[variant]
 
     try:
         from diffusers import FluxTransformer2DModel
@@ -274,7 +312,7 @@ def load_flux2_klein(model_path: str, device: torch.device):
             )
     except Exception as e:
         raise RuntimeError(
-            f"Impossible de charger Flux.2 Klein : {e}\n"
+            f"Impossible de charger Flux.2 {variant} : {e}\n"
             "Vérifiez :\n"
             "1. diffusers>=0.31 installé : pip install diffusers>=0.31\n"
             "2. Le chemin est correct\n"
@@ -285,8 +323,11 @@ def load_flux2_klein(model_path: str, device: torch.device):
         param.requires_grad_(False)
     model.eval()
 
-    log.info("✅ Flux.2 Klein chargé et gelé")
-    return model.to(device, dtype=torch.bfloat16)
+    log.info(f"✅ Flux.2 {variant} chargé et gelé")
+    log.info(f"   Architecture: {config['depth']} double blocks, {config['depth_single_blocks']} single blocks")
+    log.info(f"   Hidden size: {config['hidden_size']}, Heads: {config['num_heads']}")
+    
+    return model.to(device, dtype=torch.bfloat16), variant, config
 
 
 def load_pulid_module(comfyui_path: str, dim: int, device: torch.device):
@@ -396,12 +437,34 @@ class PuLIDKleinTrainer:
 
             log.info("✅ Checkpoint chargé")
 
-        # Flux.2 Klein (phase 2 uniquement)
+        # Flux.2 (phase 2 uniquement)
         self.flux = None
+        self.flux_config = None
         if args.phase == 2:
             if not args.flux_model_path:
                 raise ValueError("--flux_model_path requis pour phase 2")
-            self.flux = load_flux2_klein(args.flux_model_path, self.device)
+            
+            self.flux, detected_variant, self.flux_config = load_flux2_model(
+                args.flux_model_path, 
+                args.flux_variant,
+                self.device
+            )
+            
+            # Adapter dim selon la variante détectée
+            if detected_variant == "klein":
+                expected_dim = 4096
+            else:  # dev ou distilled
+                expected_dim = 3072
+            
+            if args.dim != expected_dim:
+                log.warning(
+                    f"⚠️  --dim={args.dim} ne correspond pas à {detected_variant} "
+                    f"(attendu: {expected_dim}). Auto-ajustement."
+                )
+                args.dim = expected_dim
+                # Recharger PuLID avec la bonne dim
+                self.pulid = load_pulid_module(args.comfyui_path, args.dim, self.device)
+                self.proj_loss = nn.Linear(args.dim, 512).to(self.device)
 
         # Projection pour loss identité (dim → 512)
         self.proj_loss = nn.Linear(args.dim, 512).to(self.device)
@@ -877,7 +940,7 @@ class PuLIDKleinTrainer:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Entraîne PuLID pour Flux.2 Klein (Identity Cloning)",
+        description="Entraîne PuLID pour Flux.2 (Klein/Dev/Distilled) - Identity Cloning",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
@@ -896,7 +959,12 @@ def main():
     )
     parser.add_argument(
         "--flux_model_path", type=str, default=None,
-        help="Chemin vers flux-2-klein-9b-fp8.safetensors (Phase 2 uniquement)"
+        help="Chemin vers flux-2 .safetensors (Phase 2 uniquement)"
+    )
+    parser.add_argument(
+        "--flux_variant", type=str, default="distilled",
+        choices=["klein", "dev", "distilled"],
+        help="Variante Flux.2: klein (4B/9B), dev (32B), ou distilled"
     )
     parser.add_argument(
         "--resume", type=str, default=None,
