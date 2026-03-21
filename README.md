@@ -2,7 +2,7 @@
 
 🔥 Bring consistent identity to FLUX.2 in one node  
 
-> 🚀 **v0.4.0 — Major update** (native weights + improvements)
+> 🚀 **v0.4.0 — safetensors support + native Klein weights** + improvements
 
 First working PuLID adaptation for Flux.2 — supports Klein (4B / 9B) and Dev (32B)
 
@@ -79,12 +79,20 @@ pip install insightface onnxruntime-gpu open-clip-torch safetensors ml_dtypes==0
 
 ---
 
+### 📥 Download weights
+
+👉 https://huggingface.co/Fayens/Pulid-Flux2
+
+Place in:
+ComfyUI/models/pulid/
+
+---
+
 ### 📥 Required models
 
 #### InsightFace (AntelopeV2)
 
-Download:
-https://huggingface.co/MonsterMMORPG/InstantID_Models/tree/main/models/antelopev2
+👉 https://huggingface.co/MonsterMMORPG/InstantID_Models/tree/main/models/antelopev2
 
 Place in:
 
