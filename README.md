@@ -30,9 +30,8 @@ First working PuLID adaptation for Flux.2 — supports Klein (4B / 9B) and Dev (
 2. Add **Apply PuLID ✦ Flux.2** node
 3. Use recommended settings:
 
-   * `weight = 1`
-   * `start_at = 0`
-   * `end_at = 1`
+   * `strength = .8`
+   * `strength = .6` Best Results
 4. Generate
 
 Done ✅
