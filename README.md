@@ -14,7 +14,6 @@ First working PuLID adaptation for Flux.2 — supports Klein (4B / 9B) and Dev (
 * ✅ Improved face recognition
 * ✅ Less artifacts
 * ✅ Adapted PuLID-Flux2 to Flux2-Klein-9B-Consistency Model
-* ⚠️ Sigma control (`start_at` / `end_at` NOT fully working)
 
 ---
 
