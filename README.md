@@ -2,18 +2,19 @@
 
 🔥 Bring consistent identity to FLUX.2 in one node  
 
-> 🚀 **v0.5.0 — improvements**
-👉 https://huggingface.co/dx8152/Flux2-Klein-9B-Consistency
+> 🚀 **v0.6.0 — improvements**
+👉 https://huggingface.co/Fayens/Pulid-Flux2
 
-First working PuLID adaptation for Flux.2 — supports Klein (4B / 9B) and Dev (32B)
+First working PuLID adaptation for Flux.2 — supports Klein (4B / 9B)
+Working on Dev32.
 
 ---
 
-## 🚀 What's new (v0.5.0)
+## 🚀 What's new (v0.6.0)
 
 * ✅ Improved face recognition
 * ✅ Less artifacts
-* ✅ Adapted PuLID-Flux2 to Flux2-Klein-9B-Consistency Model
+* ✅ Added native Klein weights (v1 & v2)
 
 ---
 
@@ -28,9 +29,8 @@ First working PuLID adaptation for Flux.2 — supports Klein (4B / 9B) and Dev (
 1. Load your Flux.2 model
 2. Add **Apply PuLID ✦ Flux.2** node
 3. Use recommended settings:
-
-   * `strength = .8`
-   * `strength = .6` Best Results
+   * `strength = 1.0` (normal)
+   * `strength = 1.4` (recommended)
 4. Generate
 
 Done ✅
@@ -63,7 +63,7 @@ pip install insightface onnxruntime-gpu open-clip-torch safetensors ml_dtypes==0
 
 ### 📥 Download weights
 
-👉 https://huggingface.co/dx8152/Flux2-Klein-9B-Consistency
+👉 https://huggingface.co/Fayens/Pulid-Flux2
 
 Place in:
 ComfyUI/models/pulid/
@@ -130,7 +130,7 @@ Thanks for your patience.
 | Flux.2 Klein support | ✅ Best         |
 | Flux.2 Dev support   | ✅ Working      |
 | Identity consistency | ✅ Strong       |
-| Native weights       | ⚠️ In progress |
+| Native weights       | ✅ (v1 & v2) |
 
 ---
 
@@ -148,7 +148,6 @@ Thanks for your patience.
 * PuLID original: https://github.com/ToTheBeginning/PuLID
 * Flux.2: Black Forest Labs
 * EVA-CLIP: BAAI
-* Weight: dx8152 
 * Adaptation: @iFayens
 
 ---
