@@ -134,6 +134,8 @@ class PuLIDFlux2(nn.Module):
         super().__init__()
         self.id_former = IDFormer(dim=dim)
         self.dim = dim
+        self.double_interval = 3
+        self.single_interval = 6
         self.double_ca = nn.ModuleList([PerceiverAttentionCA(dim=dim) for _ in range(10)])
         self.single_ca = nn.ModuleList([PerceiverAttentionCA(dim=dim) for _ in range(30)])
 
@@ -149,31 +151,6 @@ class PuLIDFlux2(nn.Module):
 # ============================================================================
 # Fonctions utilitaires
 # ============================================================================
-
-def get_flux_inner(model):
-    """Extrait le diffusion model interne de Flux"""
-    if hasattr(model, "model"):
-        model = model.model
-    if hasattr(model, "diffusion_model"):
-        model = model.diffusion_model
-    return model
-
-
-def detect_flux_variant(model) -> Tuple[str, int]:
-    """Détecte la variante de Flux utilisée (Klein 4B, Klein 9B, Dev 32B)"""
-    double = getattr(model, "transformer_blocks", None) or getattr(model, "double_blocks", [])
-    single = getattr(model, "single_transformer_blocks", None) or getattr(model, "single_blocks", [])
-    n_double, n_single = len(double), len(single)
-    
-    if n_double == 5 and n_single == 20:
-        return "Klein 4B", 3072
-    elif n_double == 8 and n_single == 24:
-        return "Klein 9B", 4096
-    elif n_double == 19 and n_single == 38:
-        return "Dev 32B", 4096
-    else:
-        return f"Custom ({n_double}D/{n_single}S)", 4096
-
 
 def load_eva_clip(device):
     """Charge le modèle EVA-CLIP pour l'extraction des features"""
@@ -191,128 +168,268 @@ def load_eva_clip(device):
         return None
 
 
-def get_scale_factors(block_idx: int, total_blocks: int, block_type: str = "double") -> float:
-    """
-    Calcule le facteur d'échelle pour un bloc donné
-    
-    Args:
-        block_idx: Index du bloc actuel
-        total_blocks: Nombre total de blocs
-        block_type: "double" ou "single"
-    
-    Returns:
-        float: Facteur d'échelle pour ce bloc
-    """
-    if block_type == "double":
-        # Facteurs plus forts au début, décroissants
-        if block_idx < 3:
-            return 8.0
-        elif block_idx < 5:
-            return 5.0
-        else:
-            return 3.0
-    else:  # single
-        if block_idx < 4:
-            return 6.0
-        elif block_idx < 8:
-            return 4.0
-        else:
-            return 2.0
+def _get_flux2_inner_model(model):
+    """Remonte jusqu'au vrai objet transformer de ComfyUI."""
+    if hasattr(model, "model"):
+        m = model.model
+    else:
+        m = model
+    if hasattr(m, "diffusion_model"):
+        return m.diffusion_model
+    return m
 
 
-def patch_flux(model, pulid_module, id_tokens, strength, debug=False):
+def _detect_flux2_variant(dm) -> tuple:
     """
-    Patch le modèle Flux avec les tokens d'identité PuLID
-    
-    Args:
-        model: Modèle Flux à patcher
-        pulid_module: Module PuLID contenant les couches d'attention
-        id_tokens: Tokens d'identité extraits
-        strength: Intensité du PuLID (0-2)
-        debug: Active les logs de debug
-    
-    Returns:
-        Fonction unpatch pour restaurer le modèle original
+    Détecte automatiquement le variant Flux.2 et sa dimension cachée.
+    Retourne (variant_name, hidden_dim)
+    - Klein 4B  : 5 double,  20 single, dim=3072
+    - Klein 9B  : 8 double,  24 single, dim=4096
+    - Dev 32B   : 8 double,  48 single, dim=6144
     """
-    dm = get_flux_inner(model)
-    
     double_blocks = getattr(dm, "transformer_blocks", None) or getattr(dm, "double_blocks", [])
     single_blocks = getattr(dm, "single_transformer_blocks", None) or getattr(dm, "single_blocks", [])
+
+    n_double = len(double_blocks)
+    n_single = len(single_blocks)
+
+    print(f"[PuLID-Flux2] Detected: {n_double} double blocks, {n_single} single blocks")
+
+    if n_double <= 5 and n_single <= 20:
+        return "klein_4b", 3072
+    elif n_double <= 8 and n_single <= 24:
+        return "klein_9b", 4096
+    elif n_single >= 40:
+        return "flux2_dev", 6144
+    else:
+        warnings.warn(f"[PuLID-Flux2] Unknown variant ({n_double}d/{n_single}s), defaulting to klein_9b")
+        return "klein_9b", 4096
+
+
+def patch_flux2_forward(flux_model, pulid_module, id_embedding,
+                        weight, sigma_start, sigma_end):
+
+    # récupérer le vrai modèle flux
+    dm = _get_flux2_inner_model(flux_model)
+
+    # détecter automatiquement le variant
+    variant, detected_dim = _detect_flux2_variant(dm)
+    print(f"[PuLID-Flux2] Model variant: {variant}, dim: {detected_dim}")
+
+    # adapter les modules CA si la dimension change
+    current_dim = pulid_module.id_former.latents.shape[-1]
+
+    # Sauvegarder les CA originaux si pas encore fait
+    if not hasattr(pulid_module, "_original_pulid_ca_double"):
+        pulid_module._original_pulid_ca_double = pulid_module.double_ca
+        pulid_module._original_pulid_ca_single = pulid_module.single_ca
+        pulid_module._original_dim = current_dim
+
+    if detected_dim != getattr(pulid_module, "_current_adapted_dim", current_dim):
+        device = pulid_module.id_former.latents.device
+        dtype  = pulid_module.id_former.latents.dtype
+
+        if detected_dim == pulid_module._original_dim:
+            # Restaurer les CA originaux
+            pulid_module.double_ca = pulid_module._original_pulid_ca_double
+            pulid_module.single_ca = pulid_module._original_pulid_ca_single
+            print(f"[PuLID-Flux2] PerceiverCA restored to original dim={detected_dim}")
+        else:
+            # Créer de nouveaux CA pour la dim cible
+            warnings.warn(
+                f"[PuLID-Flux2] Adapting PerceiverCA {pulid_module._original_dim} → {detected_dim}"
+            )
+            pulid_module.double_ca = nn.ModuleList([
+                PerceiverAttentionCA(dim=detected_dim).to(device, dtype=dtype)
+                for _ in range(len(pulid_module._original_pulid_ca_double))
+            ])
+            pulid_module.single_ca = nn.ModuleList([
+                PerceiverAttentionCA(dim=detected_dim).to(device, dtype=dtype)
+                for _ in range(len(pulid_module._original_pulid_ca_single))
+            ])
+            print(f"[PuLID-Flux2] PerceiverCA adapted to dim={detected_dim} ✅")
+
+        pulid_module._current_adapted_dim = detected_dim
+
+    # stocker données runtime
+    dm._pulid_flux2_data = {
+        "module": pulid_module,
+        "embedding": id_embedding,
+        "weight": weight,
+        "sigma_start": sigma_start,
+        "sigma_end": sigma_end,
+    }
     
-    original_double = {}
-    original_single = {}
-    
-    # Patch des double blocks
-    for idx, block in enumerate(double_blocks):
-        original_double[idx] = block.forward
+    # Variable pour stocker le sigma courant
+    current_sigma = [None]
+
+    def _sigma_out_of_range(data):
+        """Retourne True si on doit skipper ce step (sigma hors plage active)."""
+        if current_sigma[0] is None:
+            return False
         
-        def make_double_patch(block_idx, ca_idx):
-            def patched(img, txt, vec, **kwargs):
-                out_img, out_txt = original_double[block_idx](img, txt, vec, **kwargs)
-                
-                if ca_idx < len(pulid_module.double_ca):
-                    factor = get_scale_factors(block_idx, len(double_blocks), "double")
-                    
-                    ca = pulid_module.double_ca[ca_idx]
-                    correction = ca(out_img, id_tokens)
-                    
-                    # Normalisation optimisée avec F.normalize
-                    correction = F.normalize(correction, p=2, dim=-1)
-                    out_img = out_img + strength * factor * correction
-                    
-                    if debug:
-                        print(f"[Double Block {block_idx}] factor={factor:.1f}, correction_norm={correction.norm():.4f}")
-                
+        s = float(current_sigma[0])
+        s_norm = s
+        
+        in_range = data["sigma_end"] <= s_norm <= data["sigma_start"]
+        
+        return not in_range
+
+    original_model_function = None
+
+    def capture_sigma_wrapper(original_func):
+        def wrapper(x, timestep, *args, **kwargs):
+            if timestep is not None:
+                if isinstance(timestep, torch.Tensor):
+                    current_sigma[0] = float(timestep.max().item())
+                else:
+                    current_sigma[0] = float(timestep)
+            return original_func(x, timestep, *args, **kwargs)
+        return wrapper
+
+    if hasattr(dm, 'forward'):
+        original_model_function = dm.forward
+        dm.forward = capture_sigma_wrapper(original_model_function)
+
+    # patch double blocks
+    original_double_forwards = {}
+
+    def make_double_patch(block_idx, ca_idx):
+        def patched_forward(img, txt, vec, **kwargs):
+
+            data = getattr(dm, "_pulid_flux2_data", None)
+
+            out_img, out_txt = original_double_forwards[block_idx](
+                img, txt, vec, **kwargs
+            )
+
+            if data is None:
                 return out_img, out_txt
-            return patched
-        
-        ca_idx = min(idx, len(pulid_module.double_ca) - 1)
-        block.forward = make_double_patch(idx, ca_idx)
-    
-    # Patch des single blocks
-    for idx, block in enumerate(single_blocks):
-        original_single[idx] = block.forward
-        
-        def make_single_patch(block_idx, ca_idx):
-            def patched(x, vec, pe, *args, **kwargs):
-                try:
-                    if len(args) > 0:
-                        out = original_single[block_idx](x, vec, pe, args[0], **kwargs)
-                    else:
-                        out = original_single[block_idx](x, vec, pe, **kwargs)
-                except Exception as e:
-                    if debug:
-                        print(f"[Single Block {block_idx}] Fallback appelé: {e}")
-                    out = original_single[block_idx](x, vec, pe, **kwargs)
-                
-                if ca_idx < len(pulid_module.single_ca):
-                    factor = get_scale_factors(block_idx, len(single_blocks), "single")
-                    
-                    ca = pulid_module.single_ca[ca_idx]
-                    correction = ca(out, id_tokens)
-                    
-                    # Normalisation optimisée
-                    correction = F.normalize(correction, p=2, dim=-1)
-                    out = out + strength * factor * correction
-                    
-                    if debug:
-                        print(f"[Single Block {block_idx}] factor={factor:.1f}, correction_norm={correction.norm():.4f}")
-                
+
+            # Extraire sigma depuis transformer_options
+            if 'transformer_options' in kwargs and 'sigmas' in kwargs['transformer_options']:
+                sig = kwargs['transformer_options']['sigmas']
+                if sig is not None:
+                    current_sigma[0] = float(sig[0]) if hasattr(sig, '__getitem__') else float(sig)
+            elif 'timestep' in kwargs:
+                current_sigma[0] = float(kwargs['timestep'].max()) if hasattr(kwargs['timestep'], 'max') else float(kwargs['timestep'])
+
+            if _sigma_out_of_range(data):
+                return out_img, out_txt
+
+            embed = data["embedding"].to(out_img.device, dtype=out_img.dtype)
+            ca_mod = data["module"].double_ca
+
+            if ca_idx < len(ca_mod):
+                correction = ca_mod[ca_idx](out_img, embed)
+
+                correction = correction / (correction.norm(dim=-1, keepdim=True) + 1e-6)
+
+                alpha = data["weight"] * 0.3
+
+                out_img = out_img + alpha * correction
+
+            return out_img, out_txt
+
+        return patched_forward
+
+    # récupérer blocks flux
+    if hasattr(dm, "transformer_blocks"):
+        double_blocks = dm.transformer_blocks
+    elif hasattr(dm, "double_blocks"):
+        double_blocks = dm.double_blocks
+    else:
+        double_blocks = []
+
+    double_interval = pulid_module.double_interval
+    ca_idx = 0
+
+    for i, block in enumerate(double_blocks):
+        if i % double_interval == 0:
+            original_double_forwards[i] = block.forward
+            block.forward = make_double_patch(i, ca_idx)
+            ca_idx += 1
+
+    # patch single blocks
+    original_single_forwards = {}
+
+    def make_single_patch(block_idx, ca_idx):
+        def patched_forward(x, vec, pe, *args, **kwargs):
+            data = getattr(dm, "_pulid_flux2_data", None)
+            
+            out = original_single_forwards[block_idx](x, vec, pe, *args, **kwargs)
+            
+            if data is None:
                 return out
-            return patched
+                
+            if 'transformer_options' in kwargs and 'sigmas' in kwargs['transformer_options']:
+                sigmas = kwargs['transformer_options']['sigmas']
+                if sigmas is not None and len(sigmas) > 0:
+                    current_sigma[0] = float(sigmas[0]) if isinstance(sigmas, (list, tuple)) else float(sigmas.max())
+            elif 'timestep' in kwargs:
+                current_sigma[0] = float(kwargs['timestep'].max()) if hasattr(kwargs['timestep'], 'max') else float(kwargs['timestep'])
+                
+            if _sigma_out_of_range(data):
+                return out
+                
+            # Injection PuLID
+            if isinstance(out, tuple):
+                out_hidden = out[0]
+                embed = data["embedding"].to(out_hidden.device, dtype=out_hidden.dtype)
+                ca_mod = data["module"].single_ca
+                if ca_idx < len(ca_mod):
+                    correction = ca_mod[ca_idx](out_hidden, embed)
+                    correction = correction / (correction.norm(dim=-1, keepdim=True) + 1e-6)
+                    alpha = data["weight"] * 0.3
+                    out_hidden = out_hidden + alpha * correction
+                return (out_hidden,) + out[1:]
+            else:
+                embed = data["embedding"].to(out.device, dtype=out.dtype)
+                ca_mod = data["module"].single_ca
+                if ca_idx < len(ca_mod):
+                    correction = ca_mod[ca_idx](out, embed)
+                    out = out + data["weight"] * correction
+                return out
         
-        ca_idx = min(idx, len(pulid_module.single_ca) - 1)
-        block.forward = make_single_patch(idx, ca_idx)
-    
-    # Fonction pour restaurer l'état original
+        return patched_forward
+
+    # récupérer single blocks
+    if hasattr(dm, "single_transformer_blocks"):
+        single_blocks = dm.single_transformer_blocks
+    elif hasattr(dm, "single_blocks"):
+        single_blocks = dm.single_blocks
+    else:
+        single_blocks = []
+        warnings.warn("[PuLID-Flux2] Aucun single_block trouvé — injection partielle seulement")
+
+    single_interval = pulid_module.single_interval
+    ca_idx_single = 0
+
+    for i, block in enumerate(single_blocks):
+        if i % single_interval == 0:
+            original_single_forwards[i] = block.forward
+            block.forward = make_single_patch(i, ca_idx_single)
+            ca_idx_single += 1
+
+    print(
+        f"[PuLID-Flux2] Patched: {len(original_double_forwards)} double blocks, "
+        f"{len(original_single_forwards)} single blocks"
+    )
+
+    # cleanup / unpatch
     def unpatch():
-        for idx, block in enumerate(double_blocks):
-            if idx in original_double:
-                block.forward = original_double[idx]
-        for idx, block in enumerate(single_blocks):
-            if idx in original_single:
-                block.forward = original_single[idx]
-    
+        for i, fn in original_double_forwards.items():
+            double_blocks[i].forward = fn
+
+        for i, fn in original_single_forwards.items():
+            single_blocks[i].forward = fn
+            
+        if original_model_function is not None:
+            dm.forward = original_model_function
+
+        if hasattr(dm, "_pulid_flux2_data"):
+            del dm._pulid_flux2_data
+
     return unpatch
 
 
@@ -540,34 +657,35 @@ class ApplyPuLIDFlux2:
         
         # Clonage du modèle pour ne pas affecter l'original
         work_model = model.clone()
-        dm = get_flux_inner(work_model)
+        dm = _get_flux2_inner_model(work_model)
         
         # Nettoie l'ancien patch s'il existe
-        if hasattr(dm, "_pulid_unpatcher"):
-            try:
-                dm._pulid_unpatcher()
-                if debug_mode:
-                    print("[PuLID Debug] Ancien patch nettoyé")
-            except Exception as e:
-                if debug_mode:
-                    print(f"[PuLID Debug] Erreur lors du nettoyage: {e}")
+        if hasattr(dm, "_pulid_flux2_unpatchers"):
+            for old_unpatch in dm._pulid_flux2_unpatchers:
+                try:
+                    old_unpatch()
+                    if debug_mode:
+                        print("[PuLID Debug] Ancien patch nettoyé")
+                except Exception as e:
+                    if debug_mode:
+                        print(f"[PuLID Debug] Erreur lors du nettoyage: {e}")
+            dm._pulid_flux2_unpatchers = []
+        
+        if hasattr(dm, "_pulid_flux2_data"):
+            del dm._pulid_flux2_data
         
         # Détection de la variante Flux
-        variant, detected_dim = detect_flux_variant(dm)
+        variant, detected_dim = _detect_flux2_variant(dm)
         
-        # Projection si nécessaire
-        if id_tokens.shape[-1] != detected_dim:
-            print(f"[PuLID] 🔄 Projection nécessaire: {id_tokens.shape[-1]} → {detected_dim}")
-            proj = nn.Linear(id_tokens.shape[-1], detected_dim, bias=False).to(device, dtype=dtype)
-            nn.init.normal_(proj.weight, std=0.01)
-            id_tokens = proj(id_tokens)
-            
-            if debug_mode:
-                print(f"[PuLID Debug] id_tokens après projection: {id_tokens.shape}")
+        # Application du patch avec sigma range
+        sigma_start = 0.0
+        sigma_end = 1.0
+        unpatch = patch_flux2_forward(work_model, pulid_model, id_tokens, strength, sigma_start, sigma_end)
         
-        # Application du patch
-        unpatch = patch_flux(work_model, pulid_model, id_tokens, strength, debug=debug_mode)
-        dm._pulid_unpatcher = unpatch
+        # Stocker unpatch pour cleanup
+        if not hasattr(dm, "_pulid_flux2_unpatchers"):
+            dm._pulid_flux2_unpatchers = []
+        dm._pulid_flux2_unpatchers.append(unpatch)
         
         # Affichage des informations
         if strength == 0:
