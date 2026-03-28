@@ -2,15 +2,15 @@
 
 🔥 Bring consistent identity to FLUX.2 in one node  
 
-> 🚀 **v0.6.0 — improvements**
+> 🚀 **v0.6.1 — improvements**
 👉 https://huggingface.co/Fayens/Pulid-Flux2
 
 First working PuLID adaptation for Flux.2 — supports Klein (4B / 9B)
-Working on Dev32.
+⚠️ Not working on Dev32 yet – issue identified, fix in progress.
 
 ---
 
-## 🚀 What's new (v0.6.0)
+## 🚀 What's new (v0.6.1)
 
 * ✅ Improved face recognition
 * ✅ Less artifacts
@@ -128,7 +128,7 @@ Thanks for your patience.
 | Feature              | Status         |
 | -------------------- | -------------- |
 | Flux.2 Klein support | ✅ Best         |
-| Flux.2 Dev support   | ✅ Working      |
+| Flux.2 Dev support   | ⚠️ Not Working      |
 | Identity consistency | ✅ Strong       |
 | Native weights       | ✅ (v1 & v2) |
 
@@ -136,7 +136,7 @@ Thanks for your patience.
 
 ## 🚀 Roadmap
 
-* Native trained weights (Klein / Dev)
+* Native trained weights (Klein)
 * Edit mode (img2img)
 * Body consistency
 * HuggingFace release
